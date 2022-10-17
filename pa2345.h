@@ -51,6 +51,6 @@ int release_cs(const void * self);
 //------------------------------------------------------------------------------
 // Functions below are implemented by lector
 //------------------------------------------------------------------------------
-void print(const char * s);
+void print(const char *s, char *string);
 
 #endif // __IFMO_DISTRIBUTED_CLASS_PA2345__H

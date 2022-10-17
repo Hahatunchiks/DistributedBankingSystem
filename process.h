@@ -9,8 +9,8 @@
 #include <sys/types.h>
 
 #include "common.h"
-#include "ipc.h"
 #include "pa2345.h"
+#include "banking.h"
 
 struct proc_pipe {
     int fd[2];
@@ -19,15 +19,16 @@ struct proc_pipe {
 struct child_proc {
     local_id id;
     local_id proc_count;
-    struct proc_pipe parent_channel_in;
-    struct proc_pipe parent_channel_out;
+    struct proc_pipe parent_pipes_in;
+    struct proc_pipe parent_pipes_out;
     struct proc_pipe *children_pipes;
+    BalanceState balance_state;
 };
 
-int set_nonblock()
-{
-
+int set_nonblock(int fd) {
+    return 1;
 }
+
 int log_event(const char *const file_name, const char *msg) {
     FILE *fd = fopen(file_name, "a+");
     int res = fprintf(fd, "%s", msg);
@@ -36,7 +37,7 @@ int log_event(const char *const file_name, const char *msg) {
 }
 
 int send_full(int fd, const Message *msg) {
-    long need_send = (long)(sizeof(MessageHeader) + msg->s_header.s_payload_len);
+    long need_send = (long) (sizeof(MessageHeader) + msg->s_header.s_payload_len);
     long sent = 0;
     while (sent < need_send) {
         long res = write(fd, msg + sent, need_send - sent);
@@ -62,7 +63,7 @@ int send_multicast(void *self, const Message *msg) {
         return -1;
     }
 
-    result = send_full(proc->parent_channel_in.fd[1], msg);
+    result = send_full(proc->parent_pipes_in.fd[1], msg);
     if (result < 0) {
         return -1;
     }
@@ -113,7 +114,7 @@ int receive_all(void *self, Message *msg) {
     if (result < 0) {
         return -1;
     }
-    result = send_full(proc->parent_channel_in.fd[1], msg);
+    result = send_full(proc->parent_pipes_in.fd[1], msg);
     if (result < 0) {
         return -1;
     }
@@ -129,7 +130,7 @@ int receive_all(void *self, Message *msg) {
     return 0;
 }
 
-void wait_all(local_id cnt, struct proc_pipe* fd) {
+void wait_all(local_id cnt, struct proc_pipe *fd) {
 
     for (local_id i = 0; i < cnt; i++) {
         Message start_message;
@@ -138,6 +139,45 @@ void wait_all(local_id cnt, struct proc_pipe* fd) {
         receive_full(fd[i].fd[0], &done_message, 15);
         wait(NULL);
     }
+}
+
+int receive_any(void *self, Message *msg) {
+    return 1;
+}
+
+struct parent_proc {
+    int child_proc_count;
+    local_id id;
+    struct proc_pipe *parent_pipes_in;
+    struct proc_pipe *parent_pipes_out;
+};
+
+int init_parent_pipes(struct parent_proc *pp) {
+    pp->parent_pipes_in = malloc(sizeof(struct proc_pipe) * pp->child_proc_count);
+    pp->parent_pipes_out = malloc(sizeof(struct proc_pipe) * pp->child_proc_count);
+
+    for (int i = 0; i < pp->child_proc_count; i++) {
+        int res = pipe(pp->parent_pipes_in[i].fd);
+        if (res < 0) {
+            return -1;
+        }
+        res = pipe(pp->parent_pipes_out[i].fd);
+        if (res < 0) {
+            return -1;
+        }
+    }
+    return 0;
+}
+
+int init_child_pipes(struct child_proc *child) {
+    child->children_pipes = malloc(sizeof(struct proc_pipe) * child->proc_count);
+    for (int i = 0; i < child->proc_count; i++) {
+        int res = pipe(child->children_pipes[i].fd);
+        if (res < 0) {
+            return -1;
+        }
+    }
+    return 0;
 }
 
 #endif

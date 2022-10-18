@@ -49,7 +49,6 @@ int main(int argc, char *argv[]) {
         children[i].proc_count = (local_id) proc_count;
         children[i].id = (local_id) i;
         children[i].balance_state.s_balance = balances[i];
-        children[i].balance_state.s_time = 1; // todo : use get_physical_time() from libruntime.so
 
         init_child_pipes(&children[i]);
         log_pipes(children[i].children_pipes, children[i].id, proc_count);
@@ -78,8 +77,10 @@ int child_proc_work(struct child_proc *child) {
     // start signal
     Message message;
     message.s_header.s_type = STARTED;
+    message.s_header.s_local_time = get_physical_time();
+    child->balance_state.s_time = message.s_header.s_local_time;
 
-    sprintf(message.s_payload, log_started_fmt, child->balance_state.s_time, child->id, p, pp, child->balance_state.s_balance);
+    sprintf(message.s_payload, log_started_fmt, message.s_header.s_local_time, child->id, p, pp, child->balance_state.s_balance);
     message.s_header.s_payload_len = strlen(message.s_payload);
     int result = send_multicast(child, &message);
     if (result < 0) {

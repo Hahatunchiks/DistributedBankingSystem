@@ -7,9 +7,9 @@
 
 #include "process.h"
 
-timestamp_t get_physical_time() {
-    return 0;
-}
+//timestamp_t get_physical_time() {
+//    return 0;
+//}
 
 void transfer(void *parent_data, local_id src, local_id dst, balance_t amount) {
     struct parent_proc *parent = parent_data;
@@ -88,12 +88,13 @@ int child_proc_work(struct child_proc *child) {
                         received_transfer.s_amount, received_transfer.s_dst);
                 log_event(events_log, log_transfer);
             } else if (received_transfer.s_dst == child->id) {
+                child->balance.s_time = get_physical_time();
                 sprintf(log_transfer, log_transfer_in_fmt, child->balance.s_time, received_transfer.s_dst,
                         received_transfer.s_amount, received_transfer.s_src);
                 log_event(events_log, log_transfer);
 
                 child->balance.s_balance = (balance_t) (child->balance.s_balance + received_transfer.s_amount);
-                child->balance.s_time = get_physical_time();
+
 
                 new_message.s_header.s_local_time = child->balance.s_time;
                 new_message.s_header.s_type = ACK;

@@ -25,6 +25,7 @@ struct child_proc {
     struct proc_pipe parent_pipes_out;
     struct proc_pipe *children_pipes;
     BalanceState balance;
+    BalanceHistory history;
 };
 
 

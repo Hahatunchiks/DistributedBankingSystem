@@ -63,7 +63,7 @@ int send_multicast(void *self, const Message *msg) {
         return -1;
     }
     //send to other
-    for (local_id i = 0; i < proc->proc_count; i++) {
+    for (local_id i = 1; i <= proc->proc_count; i++) {
         if (i != proc->id) {
             result = send(proc, i, msg);
             if (result < 0) {
@@ -109,7 +109,7 @@ int receive(void *self, local_id from, Message *msg) {
 
 int receive_all(void *self, Message *msg) {
     struct child_proc *proc = self;
-    for (local_id i = 0; i < proc->proc_count; i++) {
+    for (local_id i = 1; i <= proc->proc_count; i++) {
         if (i != proc->id) {
             int result = receive(proc, i, msg);
             if (result < 0) {
@@ -148,7 +148,7 @@ int set_nonblock(int fd) {
 }
 
 int make_nonblock_pipes(struct child_proc *child) {
-    for (int i = 0; i < child->proc_count; i++) {
+    for (int i = 1; i <= child->proc_count; i++) {
         if (i != child->id) {
             if (set_nonblock(child->children_pipes[i].fd[0]) < 0) {
                 printf("cannot set non block \n");
@@ -185,7 +185,7 @@ int receive_any(void *self, Message *msg) {
             return 0;
         }
 
-        for (int i = 0; i < child->proc_count; i++) {
+        for (int i = 1; i <= child->proc_count; i++) {
             if (i != child->id) {
                 result = receive(child, (local_id)i, msg);
                 if (result < 0 && (errno != EAGAIN && errno != EWOULDBLOCK)) {

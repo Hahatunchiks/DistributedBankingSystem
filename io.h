@@ -170,6 +170,15 @@ int make_nonblock_pipes(struct child_proc *child) {
         printf("cannot set non block2\n");
         return -1;
     }
+
+    if (set_nonblock(child->parent_pipes_in.fd[0]) < 0) {
+        printf("cannot set non block1\n");
+        return -1;
+    }
+    if (set_nonblock(child->parent_pipes_in.fd[1]) < 0) {
+        printf("cannot set non block2\n");
+        return -1;
+    }
     return 0;
 }
 

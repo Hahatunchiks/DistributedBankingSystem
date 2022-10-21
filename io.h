@@ -28,6 +28,12 @@ struct child_proc {
     BalanceHistory history;
 };
 
+struct parent_proc {
+    local_id id;
+    int child_proc_count;
+    struct proc_pipe *parent_pipes_in;
+    struct proc_pipe *parent_pipes_out;
+};
 
 int log_event(const char *const file_name, const char *msg) {
     FILE *fd = fopen(file_name, "a+");
@@ -51,12 +57,31 @@ int send_full(int fd, const Message *msg) {
 }
 
 int send(void *self, local_id dst, const Message *msg) {
+
+    local_id *id = self;
+    if (*id == 0) {
+        struct parent_proc *parent = self;
+        return send_full(parent->parent_pipes_out[dst].fd[1], msg);
+    }
+
     struct child_proc *proc = self;
     int result = send_full(proc->children_pipes[dst].fd[1], msg);
-    return  result;
+    return result;
 }
 
 int send_multicast(void *self, const Message *msg) {
+
+    local_id *id = self;
+    if (*id == 0) {
+        struct parent_proc *parent = self;
+        for (local_id i = 1; i <= (local_id) parent->child_proc_count; i++) {
+            if(send(parent, i, msg) < 0) {
+                return -1;
+            }
+        }
+        return 0;
+    }
+
     struct child_proc *proc = self;
 
     long result = send_full(proc->parent_pipes_in.fd[1], msg);
@@ -84,7 +109,7 @@ int receive_full(int fd, Message *msg) {
         if (res < 0) {
             return -1;
         }
-        if(res == 0) return 0;
+        if (res == 0) return 0;
         received += res;
     }
 
@@ -102,13 +127,39 @@ int receive_full(int fd, Message *msg) {
 }
 
 int receive(void *self, local_id from, Message *msg) {
-    struct child_proc *proc = self;
+    local_id *id = self;
+    if (*id == 0) {
+        struct parent_proc *parent = self;
+        while (1) {
+            int result = receive_full(parent->parent_pipes_in[from].fd[0], msg);
+            if (result < 0) {
+                if (errno == EAGAIN || errno == EWOULDBLOCK) continue;
+                return -1;
+            }
+            break;
+        }
+        return 0;
+    }
 
+    struct child_proc *proc = self;
     int result = receive_full(proc->children_pipes[from].fd[0], msg);
     return result;
 }
 
 int receive_all(void *self, Message *msg) {
+
+    local_id *id = self;
+    if (*id == 0) {
+        struct parent_proc *parent = self;
+        for (int i = 1; i <= parent->child_proc_count; i++) {
+            Message start_message;
+            if (receive(parent, (local_id) i, &start_message) < 0) {
+                return -1;
+            }
+        }
+        return 0;
+    }
+
     struct child_proc *proc = self;
     for (local_id i = 1; i <= proc->proc_count; i++) {
         if (i != proc->id) {
@@ -125,13 +176,6 @@ int receive_all(void *self, Message *msg) {
     return 0;
 }
 
-
-struct parent_proc {
-    local_id id;
-    int child_proc_count;
-    struct proc_pipe *parent_pipes_in;
-    struct proc_pipe *parent_pipes_out;
-};
 
 //SET NONBLOCKING  STATE
 int set_nonblock(int fd) {
@@ -191,18 +235,18 @@ int receive_any(void *self, Message *msg) {
         if (result < 0 && (errno != EAGAIN && errno != EWOULDBLOCK)) {
             return -1;
         }
-        if(result >= 0) {
+        if (result >= 0) {
             return 0;
         }
 
         for (int i = 1; i <= child->proc_count; i++) {
             if (i != child->id) {
-                result = receive(child, (local_id)i, msg);
+                result = receive(child, (local_id) i, msg);
                 if (result < 0 && (errno != EAGAIN && errno != EWOULDBLOCK)) {
                     return -1;
                 }
 
-                if(result >= 0) {
+                if (result >= 0) {
                     return 0;
                 }
             }

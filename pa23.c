@@ -27,7 +27,7 @@ void transfer(void *parent_data, local_id src, local_id dst, balance_t amount) {
     }
     memset(msg.s_payload, 0, msg.s_header.s_payload_len);
     while (1) {
-        result = receive_full(parent->parent_pipes_in[dst].fd[0], &msg);
+        result = receive(parent, dst,  &msg);
         if (result < 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) continue;
         }
@@ -37,7 +37,7 @@ void transfer(void *parent_data, local_id src, local_id dst, balance_t amount) {
 
 int child_proc_work(struct child_proc *child) {
 
-    if (child_synchro_with_other(child, STARTED, log_done_fmt, log_received_all_done_fmt) < 0) {
+    if (child_synchro_with_other(child, STARTED, log_started_fmt, log_received_all_started_fmt) < 0) {
         return -1;
     }
 
@@ -49,7 +49,7 @@ int child_proc_work(struct child_proc *child) {
         }
 
         make_balance_snapshot(child);
-
+        // async
         if (new_message.s_header.s_type == STOP) {
             break;
         } else if (new_message.s_header.s_type == TRANSFER) {

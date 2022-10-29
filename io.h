@@ -48,7 +48,7 @@ int send_full(int fd, const Message *msg) {
     long sent = 0;
     while (sent < need_send) {
         long res = write(fd, msg + sent, need_send - sent);
-        if (res < 0) {
+        if (res <= 0) {
             return -1;
         }
         sent += res;
@@ -78,6 +78,9 @@ int send_multicast(void *self, const Message *msg) {
             if(send(parent, i, msg) < 0) {
                 return -1;
             }
+//            if(msg->s_header.s_type == STOP) {
+//                sleep(2);
+//            }
         }
         return 0;
     }
@@ -106,10 +109,10 @@ int receive_full(int fd, Message *msg) {
     long received = 0;
     while (received < need_receive) {
         long res = read(fd, msg + received, need_receive - received);
-        if (res < 0) {
+        if (res <= 0) {
             return -1;
         }
-        if (res == 0) return 0;
+       // if (res == 0) return 0;
         received += res;
     }
 
@@ -117,7 +120,7 @@ int receive_full(int fd, Message *msg) {
     received = 0;
     while (received < need_receive) {
         long res = read(fd, msg->s_payload + received, need_receive - received);
-        if (res < 0) {
+        if (res <= 0) {
             return -1;
         }
         received += res;
@@ -152,8 +155,8 @@ int receive_all(void *self, Message *msg) {
     if (*id == 0) {
         struct parent_proc *parent = self;
         for (int i = 1; i <= parent->child_proc_count; i++) {
-            Message start_message;
-            if (receive(parent, (local_id) i, &start_message) < 0) {
+            memset(msg, 0, sizeof(Message));
+            if (receive(parent, (local_id) i, msg) < 0) {
                 return -1;
             }
         }
@@ -163,6 +166,7 @@ int receive_all(void *self, Message *msg) {
     struct child_proc *proc = self;
     for (local_id i = 1; i <= proc->proc_count; i++) {
         if (i != proc->id) {
+            memset(msg, 0, sizeof(Message));
             int result = receive(proc, i, msg);
             if (result < 0) {
                 if (errno == EAGAIN || errno == EWOULDBLOCK) {

@@ -79,12 +79,13 @@ int child_synchro_with_other(struct child_proc *child, int16_t h_type, const cha
                              const char *const log_all_fmt) {
     Message message;
     message.s_header.s_type = h_type;
-    sprintf(message.s_payload, log_fmt, get_physical_time(), child->id, child->balance.s_balance);
+    if(h_type != 0) {
+        sprintf(message.s_payload, log_fmt, get_physical_time(), child->id, child->balance.s_balance);
+    } else {
+        sprintf(message.s_payload, log_fmt, get_physical_time(), child->id, getpid(), getppid(), child->balance.s_balance);
+    }
     message.s_header.s_payload_len = strlen(message.s_payload);
 
-    if (log_event(events_log, message.s_payload) < 0) {
-        return -1;
-    }
     if (send_multicast(child, &message) < 0) {
         return -1;
     }

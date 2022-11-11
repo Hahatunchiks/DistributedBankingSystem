@@ -40,7 +40,7 @@ int child_proc_work(struct child_proc *child) {
     if (child_synchro_with_other(child, STARTED, log_started_fmt, log_received_all_started_fmt) < 0) {
         return -1;
     }
-
+    int done_count = 0;
     while (1) {
         Message new_message;
         memset(new_message.s_payload, 0, MAX_PAYLOAD_LEN);
@@ -56,16 +56,32 @@ int child_proc_work(struct child_proc *child) {
             if (handle_transfer(child, &new_message) < 0) {
                 return -1;
             }
+        } else if (new_message.s_header.s_type == DONE) {
+            done_count++;
         } else {
             return -1;
         }
     }
 
-    if (child_synchro_with_other(child, DONE, log_done_fmt, log_received_all_done_fmt) < 0) {
+    Message done_message;
+    done_message.s_header.s_type = DONE;
+    sprintf(done_message.s_payload, log_done_fmt, get_physical_time(), child->id, child->balance.s_balance);
+    done_message.s_header.s_payload_len = strlen(done_message.s_payload);
+
+    if (send_multicast(child, &done_message) < 0) {
         return -1;
     }
+
+    for(int i = 0; i < child->proc_count - 1 - done_count; i++) {
+        if (receive_any(child, &done_message) < 0) {
+            return -1;
+        }
+    }
+
+    printf("proc %d: receive all DONE\n", child->id);
     save_balance_history(child, get_physical_time());
     if (send_balance_history(child) < 0) {
+        printf("ERROR send balance");
         return -1;
     }
     return 0;
@@ -85,18 +101,22 @@ void k_proc_work(struct parent_proc *parent) {
     if (send_multicast(parent, &message) < 0) {
         return;
     }
-
+    printf("send ALL STOP");
+    fflush(stdout);
     Message done_message;
     if (receive_all(parent, &done_message) < 0) {
         return;
     }
+    printf("parent receive all DONE");
 
     //receive balance history
     AllHistory all_history;
     all_history.s_history_len = parent->child_proc_count;
     for (local_id i = 1; i <= (local_id)parent->child_proc_count; i++) {
         Message history_message;
+        printf("receive balance");
         if (receive(parent, i, &history_message) < 0) {
+            printf("ERROR send balance");
             return;
         }
         BalanceHistory *b = (BalanceHistory *) history_message.s_payload;

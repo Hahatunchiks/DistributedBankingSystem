@@ -75,13 +75,18 @@ int send_multicast(void *self, const Message *msg) {
     if (*id == 0) {
         struct parent_proc *parent = self;
         for (local_id i = 1; i <= (local_id) parent->child_proc_count; i++) {
-            if(send(parent, i, msg) < 0) {
+            if (send(parent, i, msg) < 0) {
+                printf("SENT ERR\n");
+                fflush(stdout);
                 return -1;
             }
-//            if(msg->s_header.s_type == STOP) {
-//                sleep(2);
-//            }
+            if (msg->s_header.s_type == STOP) {
+                printf("send STOP %d\n", i);
+             //   fflush(stdout);
+                sleep(2);
+            }
         }
+        printf("SENT ALL PARENT\n");
         return 0;
     }
 
@@ -112,7 +117,7 @@ int receive_full(int fd, Message *msg) {
         if (res <= 0) {
             return -1;
         }
-       // if (res == 0) return 0;
+        // if (res == 0) return 0;
         received += res;
     }
 

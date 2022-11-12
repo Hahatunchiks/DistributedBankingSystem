@@ -13,21 +13,20 @@ void transfer(void *parent_data, local_id src, local_id dst, balance_t amount) {
     Message msg;
     memset(msg.s_payload, 0, MAX_PAYLOAD_LEN);
     msg.s_header.s_type = TRANSFER;
-    msg.s_header.s_local_time = get_physical_time();
     msg.s_header.s_payload_len = sizeof(TransferOrder);
     msg.s_header.s_magic = MESSAGE_MAGIC;
     TransferOrder *body = (TransferOrder *) msg.s_payload;
     body->s_src = src;
     body->s_dst = dst;
     body->s_amount = amount;
-
+    update_msg_local_time(&msg);
     long result = send_full(parent->parent_pipes_out[src].fd[1], &msg);
     if (result < 0) {
         return;
     }
     memset(msg.s_payload, 0, msg.s_header.s_payload_len);
     while (1) {
-        result = receive(parent, dst,  &msg);
+        result = receive(parent, dst, &msg);
         if (result < 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) continue;
         }
@@ -48,7 +47,7 @@ int child_proc_work(struct child_proc *child) {
             return -1;
         }
 
-        make_balance_snapshot(child);
+        make_balance_snapshot(child, 0);
         // async
         if (new_message.s_header.s_type == STOP) {
             break;
@@ -68,18 +67,19 @@ int child_proc_work(struct child_proc *child) {
     sprintf(done_message.s_payload, log_done_fmt, get_physical_time(), child->id, child->balance.s_balance);
     done_message.s_header.s_payload_len = strlen(done_message.s_payload);
 
+    update_msg_local_time(&done_message);
     if (send_multicast(child, &done_message) < 0) {
         return -1;
     }
 
-    for(int i = 0; i < child->proc_count - 1 - done_count; i++) {
+    for (int i = 0; i < child->proc_count - 1 - done_count; i++) {
         if (receive_any(child, &done_message) < 0) {
             return -1;
         }
     }
 
     printf("proc %d: receive all DONE\n", child->id);
-    save_balance_history(child, get_physical_time());
+    save_balance_history(child, get_lamport_time(), 0);
     if (send_balance_history(child) < 0) {
         printf("ERROR send balance");
         return -1;
@@ -98,6 +98,7 @@ void k_proc_work(struct parent_proc *parent) {
 
     Message message;
     message.s_header.s_type = STOP;
+    update_msg_local_time(&message);
     if (send_multicast(parent, &message) < 0) {
         return;
     }
@@ -112,7 +113,7 @@ void k_proc_work(struct parent_proc *parent) {
     //receive balance history
     AllHistory all_history;
     all_history.s_history_len = parent->child_proc_count;
-    for (local_id i = 1; i <= (local_id)parent->child_proc_count; i++) {
+    for (local_id i = 1; i <= (local_id) parent->child_proc_count; i++) {
         Message history_message;
         printf("receive balance");
         if (receive(parent, i, &history_message) < 0) {
@@ -156,7 +157,7 @@ int main(int argc, char **argv) {
 
     FILE *f = fopen(events_log, "a+");
 
-    struct proc_pipe *children_pipes[proc_count+1];
+    struct proc_pipe *children_pipes[proc_count + 1];
     struct child_proc children[proc_count + 1];
     init_child(children, children_pipes, proc_count, parent.parent_pipes_in, parent.parent_pipes_out, balances);
     for (local_id i = 1; i <= proc_count; i++) {

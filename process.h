@@ -3,6 +3,12 @@
 
 #include "common.h"
 #include "io.h"
+#include "clock.h"
+
+void update_msg_local_time(Message *msg) {
+    increment_lamport_time();
+    msg->s_header.s_local_time = get_lamport_time();
+}
 
 int init_parent_pipes(struct proc_pipe *pipes_array, local_id count) {
     for (local_id i = 1; i <= count; i++) {
@@ -80,11 +86,12 @@ int child_synchro_with_other(struct child_proc *child, int16_t h_type, const cha
     Message message;
     message.s_header.s_type = h_type;
     if(h_type != 0) {
-        sprintf(message.s_payload, log_fmt, get_physical_time(), child->id, child->balance.s_balance);
+        sprintf(message.s_payload, log_fmt, get_lamport_time(), child->id, child->balance.s_balance);
     } else {
-        sprintf(message.s_payload, log_fmt, get_physical_time(), child->id, getpid(), getppid(), child->balance.s_balance);
+        sprintf(message.s_payload, log_fmt, get_lamport_time(), child->id, getpid(), getppid(), child->balance.s_balance);
     }
     message.s_header.s_payload_len = strlen(message.s_payload);
+    update_msg_local_time(&message);
 
     if (send_multicast(child, &message) < 0) {
         return -1;
@@ -94,7 +101,7 @@ int child_synchro_with_other(struct child_proc *child, int16_t h_type, const cha
     }
 
     char log_all_buff[MAX_PAYLOAD_LEN];
-    sprintf(log_all_buff, log_all_fmt, get_physical_time(), child->id);
+    sprintf(log_all_buff, log_all_fmt, get_lamport_time(), child->id);
     if (log_event(events_log, log_all_buff) < 0) {
         return -1;
     }
@@ -102,13 +109,13 @@ int child_synchro_with_other(struct child_proc *child, int16_t h_type, const cha
 }
 
 
-void save_balance_history(struct child_proc *child, timestamp_t t) {
+void save_balance_history(struct child_proc *child, timestamp_t t, balance_t s_balance_pending_in) {
     child->balance.s_time = t;
+    child->balance.s_balance_pending_in = s_balance_pending_in;
     uint8_t balance_state_index = child->history.s_history_len;
     child->history.s_history[balance_state_index] = child->balance;
     child->history.s_history_len = balance_state_index + 1;
 }
-
 
 int send_balance_history(const struct child_proc *child) {
     Message history_message;
@@ -119,26 +126,29 @@ int send_balance_history(const struct child_proc *child) {
     memcpy(history_message.s_payload, &child->history,
            sizeof(BalanceState) * child->history.s_history_len + sizeof(uint8_t) * 2);
     history_message.s_header.s_magic = MESSAGE_MAGIC;
+    update_msg_local_time(&history_message);
     return send_full(child->parent_pipes_in.fd[1], &history_message);
 }
 
 
-void make_balance_snapshot(struct child_proc *child) {
-    timestamp_t curr_time = get_physical_time();
+void make_balance_snapshot(struct child_proc *child, balance_t s_balance_pending_in) {
+    timestamp_t curr_time = get_lamport_time();
     for (timestamp_t t = child->history.s_history_len; t < curr_time; t++) {
-        save_balance_history(child, t);
+        save_balance_history(child, t, s_balance_pending_in);
     }
 }
 
 
 int send_money(struct child_proc *child, TransferOrder *received_transfer, Message *new_message) {
     child->balance.s_balance = (balance_t) (child->balance.s_balance - received_transfer->s_amount);
+    update_msg_local_time(new_message);
+    save_balance_history(child, get_lamport_time(), received_transfer->s_amount);
     if (send(child, received_transfer->s_dst, new_message) < 0) {
         return -1;
     }
 
     char log_transfer[MAX_PAYLOAD_LEN];
-    sprintf(log_transfer, log_transfer_out_fmt, get_physical_time(), received_transfer->s_src,
+    sprintf(log_transfer, log_transfer_out_fmt, get_lamport_time(), received_transfer->s_src,
             received_transfer->s_amount, received_transfer->s_dst);
     log_event(events_log, log_transfer);
     return 0;
@@ -147,7 +157,7 @@ int send_money(struct child_proc *child, TransferOrder *received_transfer, Messa
 
 int receive_money(struct child_proc *child, TransferOrder *received_transfer, Message *new_message) {
     char log_transfer[MAX_PAYLOAD_LEN];
-    sprintf(log_transfer, log_transfer_in_fmt, get_physical_time(), received_transfer->s_dst,
+    sprintf(log_transfer, log_transfer_in_fmt, get_lamport_time(), received_transfer->s_dst,
             received_transfer->s_amount, received_transfer->s_src);
     log_event(events_log, log_transfer);
 
@@ -158,6 +168,7 @@ int receive_money(struct child_proc *child, TransferOrder *received_transfer, Me
     memset(new_message->s_payload, 0, new_message->s_header.s_payload_len);
     new_message->s_header.s_payload_len = 0;
 
+    update_msg_local_time(new_message);
     return send_full(child->parent_pipes_in.fd[1], new_message);
 }
 

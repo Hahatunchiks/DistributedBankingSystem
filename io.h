@@ -13,6 +13,7 @@
 #include "ipc.h"
 #include "banking.h"
 #include "pa2345.h"
+#include "clock.h"
 
 struct proc_pipe {
     int fd[2];
@@ -75,7 +76,7 @@ int send_multicast(void *self, const Message *msg) {
     if (*id == 0) {
         struct parent_proc *parent = self;
         for (local_id i = 1; i <= (local_id) parent->child_proc_count; i++) {
-            if (send(parent, i, msg) < 0) {
+            if (send_full(parent->parent_pipes_out[i].fd[1], msg) < 0) {
                 printf("SENT ERR\n");
                 fflush(stdout);
                 return -1;
@@ -99,7 +100,7 @@ int send_multicast(void *self, const Message *msg) {
     //send to other
     for (local_id i = 1; i <= proc->proc_count; i++) {
         if (i != proc->id) {
-            result = send(proc, i, msg);
+            result = send_full(proc->children_pipes[i].fd[1], msg);
             if (result < 0) {
                 return -1;
             }
@@ -130,7 +131,7 @@ int receive_full(int fd, Message *msg) {
         }
         received += res;
     }
-
+    update_lamport_time(msg);
     return 0;
 }
 

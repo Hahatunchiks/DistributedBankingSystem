@@ -8,7 +8,7 @@
 #include "process.h"
 
 void transfer(void *parent_data, local_id src, local_id dst, balance_t amount) {
-    struct parent_proc *parent = parent_data;
+    struct proc *parent = parent_data;
 
     Message msg;
     memset(msg.s_payload, 0, MAX_PAYLOAD_LEN);
@@ -19,11 +19,13 @@ void transfer(void *parent_data, local_id src, local_id dst, balance_t amount) {
     body->s_src = src;
     body->s_dst = dst;
     body->s_amount = amount;
+
     update_msg_local_time(&msg);
-    long result = send_full(parent->parent_pipes_out[src].fd[1], &msg);
+    long result = send(parent, src, &msg);
     if (result < 0) {
         return;
     }
+
     memset(msg.s_payload, 0, msg.s_header.s_payload_len);
     while (1) {
         result = receive(parent, dst, &msg);
@@ -34,20 +36,40 @@ void transfer(void *parent_data, local_id src, local_id dst, balance_t amount) {
     }
 }
 
-int child_proc_work(struct child_proc *child) {
+int child_proc_work(struct proc *child) {
 
-    if (child_synchro_with_other(child, STARTED, log_started_fmt, log_received_all_started_fmt) < 0) {
+    Message message;
+    message.s_header.s_type = STARTED;
+    sprintf(message.s_payload, log_started_fmt, get_lamport_time(), child->id, getpid(), getppid(),
+            child->balance.s_balance);
+
+    log_event(events_log, message.s_payload);
+    message.s_header.s_payload_len = strlen(message.s_payload);
+
+    update_msg_local_time(&message);
+    if (send_multicast(child, &message) < 0) {
         return -1;
     }
+
+    if (receive_all(child, &message) < 0) {
+        return -1;
+    }
+
+    char log_all_buff[MAX_PAYLOAD_LEN];
+    sprintf(log_all_buff, log_received_all_started_fmt, get_lamport_time(), child->id);
+    log_event(events_log, log_all_buff);
+
     int done_count = 0;
     while (1) {
         Message new_message;
         memset(new_message.s_payload, 0, MAX_PAYLOAD_LEN);
+
         if (receive_any(child, &new_message) < 0) {
             return -1;
         }
-
-        make_balance_snapshot(child, 0);
+        printf("proc %d: %d\n", child->id, child->history.s_history_len);
+        printf("proc %d: %d\n", child->id, get_lamport_time());
+        make_balance_snapshot(child, 0, child->history.s_history_len);
         // async
         if (new_message.s_header.s_type == STOP) {
             break;
@@ -64,7 +86,8 @@ int child_proc_work(struct child_proc *child) {
 
     Message done_message;
     done_message.s_header.s_type = DONE;
-    sprintf(done_message.s_payload, log_done_fmt, get_physical_time(), child->id, child->balance.s_balance);
+    sprintf(done_message.s_payload, log_done_fmt, get_lamport_time(), child->id, child->balance.s_balance);
+    log_event(events_log, done_message.s_payload);
     done_message.s_header.s_payload_len = strlen(done_message.s_payload);
 
     update_msg_local_time(&done_message);
@@ -76,10 +99,10 @@ int child_proc_work(struct child_proc *child) {
         if (receive_any(child, &done_message) < 0) {
             return -1;
         }
+        make_balance_snapshot(child, 0, child->history.s_history_len);
     }
-
-    printf("proc %d: receive all DONE\n", child->id);
-    save_balance_history(child, get_lamport_time(), 0);
+    sprintf(log_all_buff, log_received_all_done_fmt, get_lamport_time(), child->id);
+    log_event(events_log, log_all_buff);
     if (send_balance_history(child) < 0) {
         printf("ERROR send balance");
         return -1;
@@ -88,13 +111,13 @@ int child_proc_work(struct child_proc *child) {
 }
 
 
-void k_proc_work(struct parent_proc *parent) {
+void k_proc_work(struct proc *parent) {
     Message start_message;
     if (receive_all(parent, &start_message) < 0) {
         return;
     }
 
-    bank_robbery(parent, (local_id) (parent->child_proc_count));
+    bank_robbery(parent, (local_id) (parent->proc_count));
 
     Message message;
     message.s_header.s_type = STOP;
@@ -102,37 +125,36 @@ void k_proc_work(struct parent_proc *parent) {
     if (send_multicast(parent, &message) < 0) {
         return;
     }
-    printf("send ALL STOP");
-    fflush(stdout);
     Message done_message;
     if (receive_all(parent, &done_message) < 0) {
         return;
     }
-    printf("parent receive all DONE");
 
-    //receive balance history
     AllHistory all_history;
-    all_history.s_history_len = parent->child_proc_count;
-    for (local_id i = 1; i <= (local_id) parent->child_proc_count; i++) {
+    all_history.s_history_len = parent->proc_count;
+    for (local_id i = 1; i <= (local_id) parent->proc_count; i++) {
         Message history_message;
-        printf("receive balance");
-        if (receive(parent, i, &history_message) < 0) {
-            printf("ERROR send balance");
-            return;
+        if (receive(parent, i, &history_message) < 0 ) {
+            if(errno != EWOULDBLOCK || errno != EAGAIN) {
+                return;
+            } else {
+                i--;
+                continue;
+            }
         }
         BalanceHistory *b = (BalanceHistory *) history_message.s_payload;
         memcpy(all_history.s_history + i - 1, b, history_message.s_header.s_payload_len);
     }
-    print_history(&all_history);
+      print_history(&all_history);
 
-    for (int i = 1; i <= parent->child_proc_count; i++) {
+    for (int i = 1; i <= parent->proc_count; i++) {
         wait(NULL);
     }
 }
 
 void log_pipes(struct proc_pipe *pipes, local_id id, local_id count) {
     FILE *f = fopen(pipes_log, "a+");
-    for (local_id i = 1; i <= count; i++) {
+    for (local_id i = 0; i <= count; i++) {
         if (i != id) {
             fprintf(f, "pipes: fd[0] %d fd[1]: %d processes id: %d %d\n", pipes[i].fd[0], pipes[i].fd[1], id, i);
         }
@@ -150,17 +172,40 @@ int main(int argc, char **argv) {
         balances[i] = (balance_t) strtol(argv[i + 2], &arg_end, 10);
     }
 
-    struct parent_proc parent;
-    init_parent(&parent, proc_count);
-    log_pipes(parent.parent_pipes_in, PARENT_ID, proc_count);
-    log_pipes(parent.parent_pipes_out, PARENT_ID, proc_count);
+    struct proc_pipe children_pipes[proc_count + 1][proc_count + 1];
+    struct proc processes[proc_count + 1];
 
-    FILE *f = fopen(events_log, "a+");
+    for (local_id i = 0; i <= proc_count; i++) {
+        for (local_id j = 0; j <= proc_count; j++) {
+            if (i < j) {
+                int first_pipe[2];
+                int second_pipe[2];
 
-    struct proc_pipe *children_pipes[proc_count + 1];
-    struct child_proc children[proc_count + 1];
-    init_child(children, children_pipes, proc_count, parent.parent_pipes_in, parent.parent_pipes_out, balances);
-    for (local_id i = 1; i <= proc_count; i++) {
+                pipe(first_pipe);
+                pipe(second_pipe);
+
+                children_pipes[i][j].fd[0] = first_pipe[0];
+                children_pipes[i][j].fd[1] = second_pipe[1];
+
+                children_pipes[j][i].fd[1] = first_pipe[1];
+                children_pipes[j][i].fd[0] = second_pipe[0];
+            }
+//            processes[j].pipes[i].chanel_balance = 0;
+        }
+        processes[i].id = i;
+        processes[i].proc_count = proc_count;
+        processes[i].pipes = children_pipes[i];
+        processes[i].balance.s_balance = balances[i];
+        processes[i].balance.s_time = 0;
+        processes[i].balance.s_balance_pending_in = 0;
+        processes[i].history.s_history_len = 0;
+        processes[i].history.s_id = processes[i].id;
+        if (make_nonblock_pipes(&processes[i]) < 0) {
+            return -1;
+        }
+    }
+
+    for (local_id i = 0; i <= proc_count; i++) {
         log_pipes(children_pipes[i], i, proc_count);
     }
 
@@ -171,56 +216,35 @@ int main(int argc, char **argv) {
             break;
         }
         if (proc_id == 0) {
-            struct child_proc child = children[i];
-            child.balance.s_time = get_physical_time();
-
-            close(parent.parent_pipes_in[i].fd[0]);
-            close(parent.parent_pipes_out[i].fd[1]);
-            for (local_id j = 1; j <= proc_count; j++) {
-                if (i != j) {
-                    close(children_pipes[j][i].fd[0]);
-                    close(children_pipes[j][i].fd[1]);
-
-                    close(parent.parent_pipes_in[j].fd[0]);
-                    close(parent.parent_pipes_in[j].fd[1]);
-                    close(parent.parent_pipes_out[j].fd[0]);
-                    close(parent.parent_pipes_out[j].fd[1]);
-                    for (local_id k = 1; k <= proc_count; k++) {
-                        if (i != k && k != j) {
+            struct proc child = processes[i];
+            child.balance.s_time = get_lamport_time();
+            for(int j = 0; j <= proc_count; j++) {
+                if(j != i) {
+                    for (int k = 0; k <= proc_count; k++) {
+                        if(k != j) {
                             close(children_pipes[j][k].fd[0]);
                             close(children_pipes[j][k].fd[1]);
-                            close(children_pipes[k][j].fd[0]);
-                            close(children_pipes[k][j].fd[1]);
                         }
                     }
                 }
             }
             child_proc_work(&child);
-            free_pipes(children_pipes, proc_count);
-            free_parent_pipes(parent.parent_pipes_in, parent.parent_pipes_out);
             break;
         }
     }
 
     if (proc_id != 0) {
-        for (local_id i = 1; i <= proc_count; i++) {
-            for (local_id j = 1; j <= proc_count; j++) {
-                if (i < j) {
-                    close(children_pipes[i][j].fd[0]);
-                    close(children_pipes[i][j].fd[1]);
-                    close(children_pipes[j][i].fd[0]);
-                    close(children_pipes[j][i].fd[1]);
+        for(int j = 0; j <= proc_count; j++) {
+            if(j != PARENT_ID) {
+                for (int k = 0; k <= proc_count; k++) {
+                    if(k != j) {
+                        close(children_pipes[j][k].fd[0]);
+                        close(children_pipes[j][k].fd[1]);
+                    }
                 }
             }
-            close(parent.parent_pipes_in[i].fd[1]);
-            close(parent.parent_pipes_out[i].fd[0]);
         }
-
-        k_proc_work(&parent);
-        free_pipes(children_pipes, proc_count);
-        free_parent_pipes(parent.parent_pipes_in, parent.parent_pipes_out);
-
-        fclose(f);
+        k_proc_work(&processes[PARENT_ID]);
     }
     return 0;
 }

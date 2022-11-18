@@ -32,6 +32,7 @@ int log_event(const char *const file_name, const char *msg) {
     FILE *fd = fopen(file_name, "a+");
     int res = fprintf(fd, "%s", msg);
     printf("%s", msg);
+    fflush(stdout);
     fclose(fd);
     return res;
 }
@@ -68,7 +69,7 @@ int receive(void *self, local_id from, Message *msg) {
     }
 
     need_receive = msg->s_header.s_payload_len;
-    if(need_receive == 0) {
+    if (need_receive == 0) {
         return 0;
     }
 
@@ -127,19 +128,18 @@ int make_nonblock_pipes(struct proc *child) {
 
 int receive_any(void *self, Message *msg) {
     struct proc *child = self;
-    while (1) {
-        for (int i = 0; i <= child->proc_count; i++) {
-            if (i != child->id) {
-                long result = receive(child, (local_id) i, msg);
-                if (result < 0 && (errno != EAGAIN && errno != EWOULDBLOCK)) {
-                    return -1;
-                }
-                if (result == 0) {
-                    return 0;
-                }
+    for (int i = 0; i <= child->proc_count; i++) {
+        if (i != child->id) {
+            long result = receive(child, (local_id) i, msg);
+            if (result < 0 && (errno != EAGAIN && errno != EWOULDBLOCK)) {
+                return -1;
+            }
+            if (result == 0) {
+                return 0;
             }
         }
     }
+    return -1;
 }
 
 #endif //PA2_IO_H

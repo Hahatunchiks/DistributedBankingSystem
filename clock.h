@@ -19,10 +19,17 @@ void increment_lamport_time() {
 void  update_lamport_time(const Message *msg) {
     if (curr_local_time < msg->s_header.s_local_time) {
         curr_local_time = msg->s_header.s_local_time;
+    } else if (curr_local_time == msg->s_header.s_local_time) {
+        increment_lamport_time();
     }
     increment_lamport_time();
 }
 
 
+
+void update_msg_local_time(Message *msg) {
+    increment_lamport_time();
+    msg->s_header.s_local_time = get_lamport_time();
+}
 
 #endif //PA2_CLOCK_H

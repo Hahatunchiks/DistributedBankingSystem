@@ -40,6 +40,7 @@ int child_proc_work(struct proc *child) {
 
     Message message;
     message.s_header.s_type = STARTED;
+    message.s_header.s_magic = MESSAGE_MAGIC;
     sprintf(message.s_payload, log_started_fmt, get_lamport_time(), child->id, getpid(), getppid(),
             child->balance.s_balance);
 
@@ -64,11 +65,14 @@ int child_proc_work(struct proc *child) {
         Message new_message;
         memset(new_message.s_payload, 0, MAX_PAYLOAD_LEN);
 
-        if (receive_any(child, &new_message) < 0) {
+        while (1) {
+            int res = receive_any(child, &new_message);
+            if(res == 0) break;
+            if(res == -1 && errno == EWOULDBLOCK) continue;
+            perror("receive any");
             return -1;
         }
-        printf("proc %d: %d\n", child->id, child->history.s_history_len);
-        printf("proc %d: %d\n", child->id, get_lamport_time());
+
         make_balance_snapshot(child, 0, child->history.s_history_len);
         // async
         if (new_message.s_header.s_type == STOP) {
@@ -86,6 +90,7 @@ int child_proc_work(struct proc *child) {
 
     Message done_message;
     done_message.s_header.s_type = DONE;
+    done_message.s_header.s_magic = MESSAGE_MAGIC;
     sprintf(done_message.s_payload, log_done_fmt, get_lamport_time(), child->id, child->balance.s_balance);
     log_event(events_log, done_message.s_payload);
     done_message.s_header.s_payload_len = strlen(done_message.s_payload);
@@ -96,7 +101,12 @@ int child_proc_work(struct proc *child) {
     }
 
     for (int i = 0; i < child->proc_count - 1 - done_count; i++) {
-        if (receive_any(child, &done_message) < 0) {
+        int res  = receive_any(child, &done_message);
+        if (res == -1) {
+            if(errno == EAGAIN || errno == EWOULDBLOCK) {
+                i--;
+                continue;
+            }
             return -1;
         }
         make_balance_snapshot(child, 0, child->history.s_history_len);
@@ -121,6 +131,7 @@ void k_proc_work(struct proc *parent) {
 
     Message message;
     message.s_header.s_type = STOP;
+    message.s_header.s_magic = MESSAGE_MAGIC;
     update_msg_local_time(&message);
     if (send_multicast(parent, &message) < 0) {
         return;
@@ -163,6 +174,7 @@ void log_pipes(struct proc_pipe *pipes, local_id id, local_id count) {
 }
 
 int main(int argc, char **argv) {
+    FILE *f = fopen(events_log, "a+");
     char *arg_end;
     local_id proc_count = (local_id) strtol(argv[2], &arg_end, 10);
 
@@ -190,7 +202,6 @@ int main(int argc, char **argv) {
                 children_pipes[j][i].fd[1] = first_pipe[1];
                 children_pipes[j][i].fd[0] = second_pipe[0];
             }
-//            processes[j].pipes[i].chanel_balance = 0;
         }
         processes[i].id = i;
         processes[i].proc_count = proc_count;
@@ -246,6 +257,6 @@ int main(int argc, char **argv) {
         }
         k_proc_work(&processes[PARENT_ID]);
     }
+    fclose(f);
     return 0;
 }
-

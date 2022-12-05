@@ -10,10 +10,11 @@
 #include <fcntl.h>
 #include <errno.h>
 
-#include "ipc.h"
+
 #include "banking.h"
 #include "pa2345.h"
 #include "clock.h"
+
 
 struct proc_pipe {
     int fd[2];
@@ -25,8 +26,9 @@ struct proc {
     struct proc_pipe *pipes;
     BalanceState balance;
     BalanceHistory history;
+    timestamp_t *queue;
+    local_id done_counter;
 };
-
 
 int log_event(const char *const file_name, const char *msg) {
     FILE *fd = fopen(file_name, "a+");
@@ -52,7 +54,11 @@ int send_multicast(void *self, const Message *msg) {
     for (local_id i = 0; i <= proc->proc_count; i++) {
         if (i != proc->id) {
             int result = send(self, i, msg);
-            if (result < 0) {
+            if (result < 0 ) {
+                if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                    i--;
+                    continue;
+                }
                 return -1;
             }
         }
@@ -128,18 +134,19 @@ int make_nonblock_pipes(struct proc *child) {
 
 int receive_any(void *self, Message *msg) {
     struct proc *child = self;
-    for (int i = 0; i <= child->proc_count; i++) {
-        if (i != child->id) {
-            long result = receive(child, (local_id) i, msg);
-            if (result < 0 && (errno != EAGAIN && errno != EWOULDBLOCK)) {
-                return -1;
-            }
-            if (result == 0) {
-                return 0;
+    while (1) {
+        for (int i = 0; i <= child->proc_count; i++) {
+            if (i != child->id) {
+                long result = receive(child, (local_id) i, msg);
+                if (result < 0 && (errno != EAGAIN && errno != EWOULDBLOCK)) {
+                    return -1;
+                }
+                if (result == 0) {
+                    return 0;
+                }
             }
         }
     }
-    return -1;
 }
 
 #endif //PA2_IO_H

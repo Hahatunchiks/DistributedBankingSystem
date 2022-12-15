@@ -26,7 +26,7 @@ struct proc {
     struct proc_pipe *pipes;
     BalanceState balance;
     BalanceHistory history;
-    timestamp_t *queue;
+    int dr[11];
     local_id done_counter;
 };
 

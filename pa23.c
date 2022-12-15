@@ -76,7 +76,6 @@ int child_proc_work(struct proc *child) {
             if (recv_done_message.s_header.s_type == DONE) {
                 done_received++;
             } else if (recv_done_message.s_header.s_type == CS_REQUEST) {
-                child->queue[i - 1] = recv_done_message.s_header.s_local_time;
                 Message reply;
                 reply.s_header.s_magic = MESSAGE_MAGIC;
                 reply.s_header.s_type = CS_REPLY;
@@ -89,8 +88,6 @@ int child_proc_work(struct proc *child) {
                     }
                     break;
                 }
-            } else if (recv_done_message.s_header.s_type == CS_RELEASE) {
-                child->queue[i - 1] = -1;
             }
         }
         if (done_received == child->proc_count - 1) break;
@@ -175,6 +172,9 @@ int main(int argc, char **argv) {
         processes[i].history.s_history_len = 0;
         processes[i].history.s_id = processes[i].id;
         processes[i].done_counter = 0;
+        for (int k = 0; k <= proc_count; k++) {
+            processes->dr[k] = 0;
+        }
         if (make_nonblock_pipes(&processes[i]) < 0) {
             return -1;
         }
@@ -193,7 +193,6 @@ int main(int argc, char **argv) {
         if (proc_id == 0) {
             struct proc child = processes[i];
             child.balance.s_time = get_lamport_time();
-            child.queue = calloc(proc_count, sizeof(timestamp_t));
             for (int j = 0; j <= proc_count; j++) {
                 if (j != i) {
                     for (int k = 0; k <= proc_count; k++) {
